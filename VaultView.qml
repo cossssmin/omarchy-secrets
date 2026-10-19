@@ -577,12 +577,7 @@ Column {
           foreground: view.foreground
         }
 
-        MouseArea {
-          id: headerMouse
-          anchors.fill: parent
-          hoverEnabled: true
-        }
-
+        // Clicking the name renames the group.
         PanelSectionHeader {
           id: sectionTitle
           visible: !row.renaming
@@ -596,6 +591,17 @@ Column {
           text: row.modelData.env
           foreground: view.foreground
           fontFamily: view.fontFamily
+          color: titleMouse.containsMouse ? Color.accent : Qt.darker(view.foreground, 1.4)
+
+          MouseArea {
+            id: titleMouse
+            width: Math.min(parent.width, parent.contentWidth)
+            height: parent.height
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            enabled: !view.vault.busy
+            onClicked: view.startRename(row.modelData.env)
+          }
         }
 
         TextField {
@@ -619,25 +625,13 @@ Column {
 
         Text {
           id: sectionCount
-          anchors.right: renameButton.left
-          anchors.rightMargin: Style.spacing.md
-          anchors.verticalCenter: renameButton.verticalCenter
+          anchors.right: parent.right
+          anchors.rightMargin: Style.spacing.xl
+          anchors.verticalCenter: row.renaming ? renameField.verticalCenter : sectionTitle.verticalCenter
           text: row.header ? row.modelData.count + (row.modelData.count === 1 ? " key" : " keys") : ""
           color: Qt.darker(view.foreground, 1.6)
           font.family: view.fontFamily
           font.pixelSize: Style.font.caption
-        }
-
-        PanelActionButton {
-          id: renameButton
-          anchors.right: parent.right
-          anchors.rightMargin: Style.spacing.md
-          anchors.verticalCenter: row.renaming ? renameField.verticalCenter : sectionTitle.verticalCenter
-          iconText: String.fromCodePoint(0xF03EB)
-          foreground: headerMouse.containsMouse || row.renaming ? view.foreground : Util.alpha(view.foreground, 0.4)
-          fontFamily: view.fontFamily
-          enabled: !view.vault.busy
-          onClicked: row.renaming ? view.submitRename(row.modelData.env, renameField.text) : view.startRename(row.modelData.env)
         }
       }
 

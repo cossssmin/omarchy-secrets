@@ -86,7 +86,7 @@ Copy `~/.config/secrets/identity.age` over (it's encrypted with your passphrase)
 | `Shift + Enter` | the name |
 | `Ctrl + Enter` | the `KEY=value` line |
 
-The pencil on a row edits that key. The pencil on a group header renames the group. The trash icon deletes the key, after you confirm.
+The pencil on a row edits that key. Click a group's name to rename it. The trash icon deletes the key, after you confirm.
 
 ### Keyboard
 
