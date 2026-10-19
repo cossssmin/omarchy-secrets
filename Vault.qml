@@ -131,6 +131,10 @@ Item {
     })
   }
 
+  function renameEnv(from, to, done) {
+    act(["mv", from, to], "", function() { root.say("Renamed " + from + " to " + to); root.refresh(true); done() })
+  }
+
   function remove(env, key) {
     act(["rm", env, key], "", function() { root.say("Deleted " + key); root.refresh(true) })
   }

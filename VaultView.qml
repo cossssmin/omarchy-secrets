@@ -27,6 +27,7 @@ Column {
 
   property int selectedIndex: 0
   property string pendingDelete: ""
+  property string renamingEnv: ""
   property string copiedId: ""
   property string copiedWhat: ""
 
@@ -60,7 +61,7 @@ Column {
   Connections {
     target: view.vault
     function onUnlockedNow() { search.text = "" }
-    function onUnlockedChanged() { if (!view.vault.unlocked) view.cancelEdit() }
+    function onUnlockedChanged() { if (!view.vault.unlocked) { view.cancelEdit(); view.renamingEnv = "" } }
   }
 
   function focusInput() {
@@ -79,11 +80,33 @@ Column {
     view.pendingDelete = ""
   }
 
-  // Escape: leave the editor first, then let the host close.
+  // Escape: leave a rename or the editor first, then let the host close.
   function back() {
+    if (view.renamingEnv !== "") { view.cancelRename(); return true }
     if (view.mode !== "edit") return false
     view.cancelEdit()
     return true
+  }
+
+  function validEnv(env) {
+    return /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(env) && env.indexOf("..") === -1
+  }
+
+  function startRename(env) {
+    view.pendingDelete = ""
+    view.renamingEnv = env
+  }
+
+  function cancelRename() {
+    view.renamingEnv = ""
+    Qt.callLater(view.focusInput)
+  }
+
+  function submitRename(from, to) {
+    to = to.trim()
+    if (to === from) { view.cancelRename(); return }
+    if (!view.validEnv(to)) { view.vault.error = "Env must look like project/env"; return }
+    view.vault.renameEnv(from, to, function() { view.cancelRename() })
   }
 
   // Tab/Shift+Tab within a form; false when the mode has no form so the
@@ -165,7 +188,7 @@ Column {
   function save() {
     var env = editEnv.text.trim()
     var key = editKey.text.trim()
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(env) || env.indexOf("..") !== -1) {
+    if (!view.validEnv(env)) {
       view.vault.error = "Env must look like project/env"
       return
     }
@@ -366,6 +389,11 @@ Column {
         if (e) view.copyEntry(e, ctrl ? "line" : ((event.modifiers & Qt.ShiftModifier) ? "name" : "value"))
         event.accepted = true
       }
+      else if (event.key === Qt.Key_F2) {
+        var current = view.filtered[view.selectedIndex]
+        if (current) view.startRename(current.env)
+        event.accepted = true
+      }
       else if (ctrl && event.key === Qt.Key_N) { view.startAdd(); event.accepted = true }
       else if (ctrl && event.key === Qt.Key_E) { view.editSelected(); event.accepted = true }
     }
@@ -405,8 +433,10 @@ Column {
       readonly property string copied: view.copiedId === rowId ? view.copiedWhat : ""
 
       width: ListView.view.width
+      readonly property bool renaming: header && view.renamingEnv === modelData.env
+
       height: header
-        ? (index === 0 ? Style.space(24) : Style.space(44))
+        ? (index === 0 ? Style.space(renaming ? 34 : 24) : Style.space(44))
         : Style.spacing.popupRowHeight + Style.spacing.rowPaddingX
 
       function select() { view.selectedIndex = row.modelData.entryIndex }
@@ -424,8 +454,15 @@ Column {
           foreground: view.foreground
         }
 
+        MouseArea {
+          id: headerMouse
+          anchors.fill: parent
+          hoverEnabled: true
+        }
+
         PanelSectionHeader {
           id: sectionTitle
+          visible: !row.renaming
           anchors.left: parent.left
           anchors.leftMargin: Style.spacing.xl
           anchors.right: sectionCount.left
@@ -438,15 +475,46 @@ Column {
           fontFamily: view.fontFamily
         }
 
+        TextField {
+          id: renameField
+          visible: row.renaming
+          anchors.left: parent.left
+          anchors.right: sectionCount.left
+          anchors.rightMargin: Style.spacing.lg
+          anchors.bottom: parent.bottom
+          verticalPadding: Style.spacing.xxs
+          foreground: view.foreground
+          font.family: view.fontFamily
+          font.pixelSize: Style.font.caption
+          onVisibleChanged: if (visible) {
+            text = row.modelData.env
+            selectAll()
+            forceActiveFocus()
+          }
+          onAccepted: view.submitRename(row.modelData.env, text)
+        }
+
         Text {
           id: sectionCount
-          anchors.right: parent.right
-          anchors.rightMargin: Style.spacing.xl
-          anchors.baseline: sectionTitle.baseline
+          anchors.right: renameButton.left
+          anchors.rightMargin: Style.spacing.md
+          anchors.verticalCenter: renameButton.verticalCenter
           text: row.header ? row.modelData.count + (row.modelData.count === 1 ? " key" : " keys") : ""
           color: Qt.darker(view.foreground, 1.6)
           font.family: view.fontFamily
           font.pixelSize: Style.font.caption
+        }
+
+        PanelActionButton {
+          id: renameButton
+          anchors.right: parent.right
+          anchors.rightMargin: Style.spacing.md
+          anchors.verticalCenter: row.renaming ? renameField.verticalCenter : sectionTitle.verticalCenter
+          iconText: String.fromCodePoint(0xF03EB)
+          foreground: headerMouse.containsMouse || row.renaming ? view.foreground : Util.alpha(view.foreground, 0.4)
+          fontFamily: view.fontFamily
+          enabled: !view.vault.busy
+          onClicked: row.renaming ? view.submitRename(row.modelData.env, renameField.text) : view.startRename(row.modelData.env)
         }
       }
 
@@ -637,6 +705,7 @@ Column {
 
     readonly property string pendingKey: view.pendingDelete.split("\n")[1] || ""
     readonly property string hint: {
+      if (view.renamingEnv !== "") return "↵ rename   Esc cancel"
       if (view.mode === "list") return "↵ copy value   ⇧↵ name   ⌃↵ KEY=value   ⌃N new"
       if (view.mode === "edit") return "↵ next / save   Tab move   Esc cancel"
       return ""
