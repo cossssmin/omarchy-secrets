@@ -26,7 +26,8 @@ Column {
   property bool showValue: false
 
   property int selectedIndex: 0
-  property string pendingDelete: ""
+  // The entry the host's confirm dialog is asking about, or null.
+  property var deleteCandidate: null
   property string renamingEnv: ""
   property string copiedId: ""
   property string copiedWhat: ""
@@ -61,7 +62,12 @@ Column {
   Connections {
     target: view.vault
     function onUnlockedNow() { search.text = "" }
-    function onUnlockedChanged() { if (!view.vault.unlocked) { view.cancelEdit(); view.renamingEnv = "" } }
+    function onUnlockedChanged() {
+      if (view.vault.unlocked) return
+      view.cancelEdit()
+      view.renamingEnv = ""
+      view.deleteCandidate = null
+    }
   }
 
   function focusInput() {
@@ -77,7 +83,7 @@ Column {
     setupPass.text = ""
     setupConfirm.text = ""
     unlockPass.text = ""
-    view.pendingDelete = ""
+    view.deleteCandidate = null
   }
 
   // Escape: leave a rename or the editor first, then let the host close.
@@ -93,7 +99,6 @@ Column {
   }
 
   function startRename(env) {
-    view.pendingDelete = ""
     view.renamingEnv = env
   }
 
@@ -199,15 +204,26 @@ Column {
     view.vault.save(env, key, editValue.text, view.editOldEnv, view.editOldKey, function() { view.cancelEdit() })
   }
 
+  // Deleting always goes through the host's confirm dialog.
   function requestDelete(e) {
-    var id = view.entryId(e)
-    if (view.pendingDelete === id) {
-      view.pendingDelete = ""
-      view.vault.remove(e.env, e.key)
-      return
-    }
-    view.pendingDelete = id
-    deleteTimer.restart()
+    view.deleteCandidate = e
+  }
+
+  function deleteSelected() {
+    var e = view.filtered[view.selectedIndex]
+    if (e) view.requestDelete(e)
+  }
+
+  function confirmDelete() {
+    var e = view.deleteCandidate
+    view.deleteCandidate = null
+    if (e) view.vault.remove(e.env, e.key)
+    Qt.callLater(view.focusInput)
+  }
+
+  function cancelDelete() {
+    view.deleteCandidate = null
+    Qt.callLater(view.focusInput)
   }
 
   function submitSetup() {
@@ -225,7 +241,6 @@ Column {
   }
 
   Timer { id: copiedTimer; interval: 1500; onTriggered: view.copiedId = "" }
-  Timer { id: deleteTimer; interval: 3000; onTriggered: view.pendingDelete = "" }
 
   // --- header ---------------------------------------------------------------
 
@@ -293,12 +308,47 @@ Column {
         onClicked: view.startAdd()
       }
       PanelActionButton {
-        iconText: String.fromCodePoint(0xF04E6)
+        iconText: view.vault.syncing ? "" : String.fromCodePoint(0xF04E6)
         tooltipText: view.vault.remote ? "Sync with GitHub" : "No git remote"
         foreground: view.foreground
         fontFamily: view.fontFamily
         enabled: view.vault.remote && !view.vault.busy
         onClicked: view.vault.sync()
+
+        // Spins while a sync runs; the button's own glyph is blanked meanwhile.
+        // It rotates around the glyph's ink, not its text box: the two
+        // centers differ, and spinning around the box makes it wobble.
+        Item {
+          anchors.centerIn: parent
+          visible: view.vault.syncing
+          width: spinMetrics.tightBoundingRect.width
+          height: spinMetrics.tightBoundingRect.height
+
+          TextMetrics {
+            id: spinMetrics
+            text: spinGlyph.text
+            font: spinGlyph.font
+          }
+
+          Text {
+            id: spinGlyph
+            x: -spinMetrics.tightBoundingRect.x
+            y: -(baselineOffset + spinMetrics.tightBoundingRect.y)
+            text: String.fromCodePoint(0xF04E6)
+            color: view.foreground
+            font.family: view.fontFamily
+            font.pixelSize: Style.font.icon
+          }
+
+          // Counter-clockwise, the way the glyph's arrows point.
+          RotationAnimation on rotation {
+            from: 0
+            to: -360
+            duration: 900
+            loops: Animation.Infinite
+            running: view.vault.syncing
+          }
+        }
       }
       PanelActionButton {
         iconText: String.fromCodePoint(0xF033E)
@@ -396,6 +446,13 @@ Column {
       }
       else if (ctrl && event.key === Qt.Key_N) { view.startAdd(); event.accepted = true }
       else if (ctrl && event.key === Qt.Key_E) { view.editSelected(); event.accepted = true }
+      else if (ctrl && event.key === Qt.Key_D) { view.deleteSelected(); event.accepted = true }
+      else if (event.key === Qt.Key_Insert) { view.editSelected(); event.accepted = true }
+      // Delete only when it has nothing to delete in the field itself.
+      else if (event.key === Qt.Key_Delete && search.selectedText === "" && search.cursorPosition === search.text.length) {
+        view.deleteSelected()
+        event.accepted = true
+      }
     }
   }
 
@@ -429,7 +486,7 @@ Column {
       readonly property bool header: modelData.header === true
       readonly property string rowId: view.entryId(modelData)
       readonly property bool selected: !header && view.selectedIndex === modelData.entryIndex
-      readonly property bool confirming: view.pendingDelete === rowId
+      readonly property bool confirming: view.deleteCandidate !== null && view.entryId(view.deleteCandidate) === rowId
       readonly property string copied: view.copiedId === rowId ? view.copiedWhat : ""
 
       width: ListView.view.width
@@ -697,16 +754,15 @@ Column {
 
   // --- footer -----------------------------------------------------------------
 
-  // Status line: errors, then the pending delete, then notices, then hints.
+  // Status line: errors, then notices, then hints.
   Column {
     id: footer
     width: parent.width
     spacing: Style.spacing.md
 
-    readonly property string pendingKey: view.pendingDelete.split("\n")[1] || ""
     readonly property string hint: {
       if (view.renamingEnv !== "") return "↵ rename   Esc cancel"
-      if (view.mode === "list") return "↵ copy value   ⇧↵ name   ⌃↵ KEY=value   ⌃N new"
+      if (view.mode === "list") return "↵ value  ⇧↵ name  ⌃↵ line  ⌃N new  Ins edit  Del delete"
       if (view.mode === "edit") return "↵ next / save   Tab move   Esc cancel"
       return ""
     }
@@ -721,11 +777,8 @@ Column {
       width: parent.width
       visible: text !== ""
       elide: Text.ElideRight
-      text: view.vault.error
-        || (footer.pendingKey ? "Click delete again to remove " + footer.pendingKey : "")
-        || view.vault.notice
-        || footer.hint
-      color: view.vault.error || footer.pendingKey ? Color.urgent
+      text: view.vault.error || view.vault.notice || footer.hint
+      color: view.vault.error ? Color.urgent
         : (view.vault.notice ? Color.accent : Qt.darker(view.foreground, 1.6))
       font.family: view.fontFamily
       font.pixelSize: Style.font.caption

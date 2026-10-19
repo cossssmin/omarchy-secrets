@@ -25,10 +25,13 @@ Item {
   property var entries: []
 
   property bool busy: false
+  property bool syncing: false
   property string error: ""
   property string notice: ""
 
   signal unlockedNow()
+
+  onBusyChanged: if (!busy) root.syncing = false
 
   function setting(name, fallback) {
     var v = root.settingFn ? root.settingFn(name, fallback) : fallback
@@ -140,6 +143,7 @@ Item {
   }
 
   function sync() {
+    root.syncing = true
     act(["sync"], "", function() { root.say("Synced"); root.refresh(true) })
   }
 

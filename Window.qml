@@ -69,6 +69,7 @@ Item {
       focus: true
       Keys.priority: Keys.BeforeItem
       Keys.onPressed: function(event) {
+        if (deleteDialog.handleKey(event)) { event.accepted = true; return }
         if (event.key === Qt.Key_Escape) { if (!view.back()) root.requestClose(); event.accepted = true }
         else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
           view.cycleFocus(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
@@ -85,6 +86,28 @@ Item {
         foreground: Color.popups.text
         fontFamily: Style.font.family
       }
+
+      // Holds focus while the dialog is up, so keys skip the search field's
+      // handlers and reach the dialog through this scope.
+      Item { id: dialogFocus }
+    }
+
+    ConfirmDialog {
+      id: deleteDialog
+      anchors.fill: parent
+      opened: view.deleteCandidate !== null
+      message: opened ? "Delete " + view.deleteCandidate.key + "?\nfrom " + view.deleteCandidate.env : ""
+      confirmText: "Delete"
+      background: Color.popups.background
+      foreground: Color.popups.text
+      fontFamily: Style.font.family
+      // Cancel is preselected: a reflexive Enter never deletes.
+      onOpenedChanged: if (opened) {
+        selectedIndex = 0
+        dialogFocus.forceActiveFocus()
+      }
+      onCanceled: view.cancelDelete()
+      onConfirmed: view.confirmDelete()
     }
   }
 }
