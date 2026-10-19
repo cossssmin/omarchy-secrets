@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "cossssmin.secrets",
+  "name": "Secrets",
+  "version": "0.1.0",
+  "author": "cossssmin",
+  "license": "MIT",
+  "description": "Age-encrypted env secrets in a git repo, in a floating window toggled from the bar.",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "panel": "Window.qml"
+  },
+  "barWidget": {
+    "displayName": "Secrets",
+    "description": "Search, copy and edit age-encrypted env secrets",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "ttlMinutes": 0,
+      "repoDir": ""
+    },
+    "schema": [
+      {
+        "key": "ttlMinutes",
+        "type": "integer",
+        "label": "Auto-lock after (minutes)",
+        "min": 0,
+        "max": 1440,
+        "step": 5,
+        "defaultValue": 0,
+        "description": "0 keeps it unlocked until you lock it or log out."
+      },
+      {
+        "key": "repoDir",
+        "type": "path",
+        "label": "Secrets repo",
+        "defaultValue": "",
+        "description": "Empty uses ~/Work/secrets."
+      }
+    ]
+  },
+  "keepLoaded": true
+}
