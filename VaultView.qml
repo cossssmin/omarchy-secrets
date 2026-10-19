@@ -23,6 +23,26 @@ Column {
 
   property bool editing: false
   property bool settingsOpen: false
+  // Auto-lock minutes being edited in the settings; 0 = never.
+  property int settingsTtl: 15
+  readonly property var lockStops: [5, 15, 30, 60, 120, 240, 480, 1440, 0]
+  readonly property int lockStopIndex: lockStops.indexOf(settingsTtl)
+
+  function lockLabel(minutes) {
+    if (minutes === 0) return "Never"
+    if (minutes % 1440 === 0) return minutes / 1440 + (minutes === 1440 ? " day" : " days")
+    if (minutes % 60 === 0) return minutes / 60 + (minutes === 60 ? " hour" : " hours")
+    return minutes + " min"
+  }
+
+  // The stop closest to a custom value, so the slider still points somewhere sensible.
+  function nearestLockStop(minutes) {
+    if (minutes === 0) return lockStops.length - 1
+    var best = 0
+    for (var i = 1; i < lockStops.length - 1; i++)
+      if (Math.abs(lockStops[i] - minutes) < Math.abs(lockStops[best] - minutes)) best = i
+    return best
+  }
   property string editOldEnv: ""
   property string editOldKey: ""
   property bool showValue: false
@@ -123,11 +143,13 @@ Column {
     var fields = {
       setup: [setupPass, setupConfirm],
       edit: [editEnv, editKey, editValue],
-      settings: [settingsDir, syncChoice].concat(settingsRemote.visible ? [settingsRemote] : []).concat([ttlField.field, lockToggle])
+      settings: [settingsDir, syncChoice].concat(settingsRemote.visible ? [settingsRemote] : []).concat([lockSlider, ttlField.field, lockToggle])
     }[view.mode]
     if (!fields) return false
     var current = fields.findIndex(function(f) { return f.activeFocus })
-    fields[(current + direction + fields.length) % fields.length].forceActiveFocus()
+    var next = fields[(current + direction + fields.length) % fields.length]
+    next.forceActiveFocus()
+    view.revealSetting(next === ttlField.field ? ttlField : next)
     return true
   }
 
@@ -238,8 +260,9 @@ Column {
     settingsDir.text = c.dir || ""
     syncChoice.value = c.sync || "github"
     settingsRemote.text = c.remote || ""
-    ttlField.value = Math.round((c.ttl || 0) / 60)
+    view.settingsTtl = Math.round((c.ttl === undefined ? 900 : c.ttl) / 60)
     lockToggle.checked = c.lockOnScreenLock !== false
+    settingsScroll.contentY = 0
     view.settingsOpen = true
   }
 
@@ -252,7 +275,7 @@ Column {
     if (syncChoice.value !== (c.sync || "github")) changes.push(["sync", syncChoice.value])
     if (syncChoice.value === "github" && settingsRemote.text.trim() !== (c.remote || ""))
       changes.push(["remote", settingsRemote.text.trim()])
-    if (ttlField.value * 60 !== (c.ttl || 0)) changes.push(["ttl", ttlField.value * 60])
+    if (view.settingsTtl * 60 !== (c.ttl === undefined ? 900 : c.ttl)) changes.push(["ttl", view.settingsTtl * 60])
     if (lockToggle.checked !== (c.lockOnScreenLock !== false))
       changes.push(["lock-on-screen-lock", lockToggle.checked ? "true" : "false"])
     view.vault.saveConfig(changes, function() { view.settingsOpen = false })
@@ -797,102 +820,281 @@ Column {
 
   // --- settings -----------------------------------------------------------------
 
-  Column {
+  component FieldLabel: Text {
+    color: view.foreground
+    font.family: view.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    font.bold: true
+  }
+
+  component FieldHelp: Text {
+    width: parent ? parent.width : implicitWidth
+    wrapMode: Text.Wrap
+    color: Qt.darker(view.foreground, 1.6)
+    font.family: view.fontFamily
+    font.pixelSize: Style.font.caption
+  }
+
+  // Scrolls the settings so a field reached with Tab isn't hidden. Qt moves
+  // focus between fields itself, so each field calls this when it gets focus.
+  function revealSetting(item) {
+    if (!item || view.mode !== "settings") return
+    // The whole field (label, control, help), not just the control.
+    if (item.parent && item.parent !== settingsForm) item = item.parent
+    var p = item.mapToItem(settingsForm, 0, 0)
+    var top = p.y - Style.spacing.lg
+    if (top < Style.space(48)) top = 0
+    var bottom = p.y + item.height + Style.spacing.lg
+    if (top < settingsScroll.contentY) settingsScroll.contentY = Math.max(0, top)
+    else if (bottom > settingsScroll.contentY + settingsScroll.height)
+      settingsScroll.contentY = Math.min(settingsScroll.contentHeight - settingsScroll.height, bottom - settingsScroll.height)
+  }
+
+  Item {
+    id: settingsPane
     width: parent.width
-    spacing: Style.spacing.xxl
     visible: view.mode === "settings"
+    height: visible ? Math.max(0, view.height - y - footer.height - view.spacing) : 0
 
-    Column {
-      width: parent.width
-      spacing: Style.spacing.md
+    Flickable {
+      id: settingsScroll
+      anchors.top: parent.top
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: settingsButtons.top
+      anchors.bottomMargin: Style.spacing.xl
+      contentHeight: settingsForm.implicitHeight
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
 
-      Text {
-        text: "Repo folder"
-        color: Qt.darker(view.foreground, 1.4)
-        font.family: view.fontFamily
-        font.pixelSize: Style.font.bodySmall
-      }
-      TextField {
-        id: settingsDir
-        width: parent.width
-        placeholderText: "~/.local/share/secrets"
-        foreground: view.foreground
-        font.family: view.fontFamily
-        onAccepted: view.saveSettings()
-      }
-      Text {
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: "An existing secrets repo, or an empty folder to start a new one."
-        color: Qt.darker(view.foreground, 1.6)
-        font.family: view.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-    }
+      Column {
+        id: settingsForm
+        width: settingsScroll.width
+        spacing: Style.spacing.huge
 
-    Column {
-      width: parent.width
-      spacing: Style.spacing.md
+        // --- storage ---
 
-      Text {
-        text: "Sync"
-        color: Qt.darker(view.foreground, 1.4)
-        font.family: view.fontFamily
-        font.pixelSize: Style.font.bodySmall
-      }
-      ButtonGroup {
-        id: syncChoice
-        options: [{ value: "github", label: "GitHub" }, { value: "local", label: "Local only" }]
-        value: "github"
-        foreground: view.foreground
-        fontFamily: view.fontFamily
-        onChanged: function(v) { syncChoice.value = v }
-      }
-      TextField {
-        id: settingsRemote
-        visible: syncChoice.value === "github"
-        width: parent.width
-        placeholderText: "git@github.com:you/secrets.git"
-        foreground: view.foreground
-        font.family: view.fontFamily
-        onAccepted: view.saveSettings()
-      }
-      Text {
-        width: parent.width
-        wrapMode: Text.Wrap
-        text: syncChoice.value === "github"
-          ? "Every change is pushed here. Use a private repo."
-          : "Changes are committed but never pushed."
-        color: Qt.darker(view.foreground, 1.6)
-        font.family: view.fontFamily
-        font.pixelSize: Style.font.caption
-      }
-    }
+        Column {
+          width: parent.width
+          spacing: Style.spacing.xxl
 
-    NumberField {
-      id: ttlField
-      label: "Auto-lock after (minutes, 0 = never)"
-      from: 0
-      to: 1440
-      stepSize: 5
-      foreground: view.foreground
-      fontFamily: view.fontFamily
-      onModified: function(v) { ttlField.value = v }
-    }
+          PanelSectionHeader {
+            text: "Storage"
+            foreground: view.foreground
+            fontFamily: view.fontFamily
+          }
 
-    Toggle {
-      id: lockToggle
-      width: parent.width
-      label: "Lock when the screen locks"
-      description: "Also covers suspend, since the screen locks first."
-      foreground: view.foreground
-      fontFamily: view.fontFamily
-      onClicked: lockToggle.checked = !lockToggle.checked
+          Column {
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            FieldLabel { text: "Repo folder" }
+            TextField {
+              id: settingsDir
+              onActiveFocusChanged: if (activeFocus) view.revealSetting(settingsDir)
+              width: parent.width
+              placeholderText: "~/.local/share/secrets"
+              foreground: view.foreground
+              font.family: view.fontFamily
+              onAccepted: view.saveSettings()
+            }
+            FieldHelp { text: "An existing secrets repo, or an empty folder to start a new one." }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            FieldLabel { text: "Sync" }
+            ButtonGroup {
+              id: syncChoice
+              onActiveFocusChanged: if (activeFocus) view.revealSetting(syncChoice)
+              options: [{ value: "github", label: "GitHub" }, { value: "local", label: "Local only" }]
+              value: "github"
+              foreground: view.foreground
+              fontFamily: view.fontFamily
+              onChanged: function(v) { syncChoice.value = v }
+            }
+            FieldHelp {
+              text: syncChoice.value === "github"
+                ? "Every change is committed and pushed to your remote."
+                : "Changes are committed on this machine and never pushed."
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.sm
+            visible: syncChoice.value === "github"
+
+            FieldLabel { text: "Remote URL" }
+            TextField {
+              id: settingsRemote
+              onActiveFocusChanged: if (activeFocus) view.revealSetting(settingsRemote)
+              width: parent.width
+              placeholderText: "git@github.com:you/secrets.git"
+              foreground: view.foreground
+              font.family: view.fontFamily
+              onAccepted: view.saveSettings()
+            }
+            FieldHelp { text: "Use a private repo." }
+          }
+        }
+
+        PanelSeparator { foreground: view.foreground }
+
+        // --- locking ---
+
+        Column {
+          width: parent.width
+          spacing: Style.spacing.xxl
+
+          PanelSectionHeader {
+            text: "Locking"
+            foreground: view.foreground
+            fontFamily: view.fontFamily
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.sm
+
+            Item {
+              width: parent.width
+              height: lockTitle.height
+
+              FieldLabel { id: lockTitle; text: "Auto-lock after" }
+              Text {
+                anchors.right: parent.right
+                anchors.baseline: lockTitle.baseline
+                text: view.lockStopIndex === -1 ? "Custom: " + view.lockLabel(view.settingsTtl) : view.lockLabel(view.settingsTtl)
+                color: Color.accent
+                font.family: view.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+            }
+
+            // Preset stops from 5 minutes up to never; ←/→ step through them.
+            PanelSlider {
+              id: lockSlider
+              onActiveFocusChanged: if (activeFocus) view.revealSetting(lockSlider)
+              // Inset so the knob's hover growth isn't clipped at either end.
+              x: Style.spacing.sm
+              width: parent.width - 2 * Style.spacing.sm
+              minimum: 0
+              maximum: view.lockStops.length - 1
+              integer: true
+              step: 1
+              tickCount: view.lockStops.length
+              value: view.lockStopIndex === -1 ? view.nearestLockStop(view.settingsTtl) : view.lockStopIndex
+              trackColor: Style.selectedFillFor(view.foreground, Color.accent)
+              fillColor: activeFocus ? Color.accent : view.foreground
+              knobColor: activeFocus ? Color.accent : view.foreground
+              tickColor: Color.popups.background
+              activeFocusOnTab: true
+              onMoved: function(v) { view.settingsTtl = view.lockStops[Math.round(v)] }
+              Keys.onPressed: function(event) {
+                var i = Math.round(lockSlider.value)
+                if (event.key === Qt.Key_Left && i > 0) view.settingsTtl = view.lockStops[i - 1]
+                else if (event.key === Qt.Key_Right && i < view.lockStops.length - 1) view.settingsTtl = view.lockStops[i + 1]
+                else return
+                event.accepted = true
+              }
+            }
+
+            Row {
+              spacing: Style.spacing.lg
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Or exactly"
+                color: Qt.darker(view.foreground, 1.6)
+                font.family: view.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              NumberField {
+                id: ttlField
+                anchors.verticalCenter: parent.verticalCenter
+                fieldWidth: Style.space(110)
+                from: 0
+                to: 10080
+                stepSize: 5
+                value: view.settingsTtl
+                foreground: view.foreground
+                fontFamily: view.fontFamily
+                onModified: function(v) { view.settingsTtl = v }
+
+                Connections {
+                  target: ttlField.field
+                  function onActiveFocusChanged() { if (ttlField.field.activeFocus) view.revealSetting(ttlField) }
+                }
+              }
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "minutes (0 = never)"
+                color: Qt.darker(view.foreground, 1.6)
+                font.family: view.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+
+          // A plain row like the other fields rather than the kit's carded Toggle.
+          Item {
+            id: lockToggle
+            onActiveFocusChanged: if (activeFocus) view.revealSetting(lockToggle)
+            property bool checked: true
+            width: parent.width
+            height: Math.max(lockToggleText.height, lockSwitch.height)
+            activeFocusOnTab: true
+            Keys.onSpacePressed: lockToggle.checked = !lockToggle.checked
+            Keys.onReturnPressed: lockToggle.checked = !lockToggle.checked
+
+            Column {
+              id: lockToggleText
+              anchors.left: parent.left
+              anchors.right: lockSwitch.left
+              anchors.rightMargin: Style.spacing.xxl
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.spacing.sm
+
+              FieldLabel { text: "Lock when the screen locks" }
+              FieldHelp { text: "Suspending locks the screen first, so this covers it too." }
+            }
+
+            ToggleSwitch {
+              id: lockSwitch
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              checked: lockToggle.checked
+              interactive: false
+              hasCursor: lockToggle.activeFocus
+              foreground: view.foreground
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: lockToggle.checked = !lockToggle.checked
+            }
+          }
+        }
+      }
     }
 
     Row {
+      id: settingsButtons
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
       spacing: Style.spacing.controlGap
 
+      Button {
+        text: "Cancel"
+        foreground: view.foreground
+        fontFamily: view.fontFamily
+        onClicked: view.settingsOpen = false
+      }
       Button {
         text: "Save"
         bordered: true
@@ -900,12 +1102,6 @@ Column {
         fontFamily: view.fontFamily
         enabled: !view.vault.busy
         onClicked: view.saveSettings()
-      }
-      Button {
-        text: "Cancel"
-        foreground: view.foreground
-        fontFamily: view.fontFamily
-        onClicked: view.settingsOpen = false
       }
     }
   }
