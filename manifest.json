@@ -33,14 +33,14 @@
         "max": 1440,
         "step": 5,
         "defaultValue": 0,
-        "description": "0 keeps it unlocked until you lock it or log out."
+        "description": "0 keeps it unlocked until you lock it or reboot."
       },
       {
         "key": "repoDir",
         "type": "path",
         "label": "Secrets repo",
         "defaultValue": "",
-        "description": "Empty uses ~/Work/secrets."
+        "description": "Empty uses SECRETS_DIR from ~/.config/secrets/config, or ~/.local/share/secrets."
       }
     ]
   },

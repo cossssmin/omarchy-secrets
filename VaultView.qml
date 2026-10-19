@@ -688,7 +688,7 @@ Column {
     TextField {
       id: editEnv
       width: parent.width
-      placeholderText: "project/env, e.g. primire/production"
+      placeholderText: "project/env, e.g. acme-api/production"
       foreground: view.foreground
       font.family: view.fontFamily
       onTextChanged: view.splitAssignment(editEnv)
