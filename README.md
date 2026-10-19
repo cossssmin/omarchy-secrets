@@ -128,6 +128,8 @@ Run `secrets help` for the full list, including `backup-key`, `rotate` and `reke
 
 Open the settings from the gear icon, or with `Ctrl + ,`:
 
+![Secrets settings](preview-settings.png)
+
 - **Repo folder** - where the encrypted files live, `~/.local/share/secrets` by default. Point it at an existing secrets repo, or at an empty folder to start a new one there.
 - **Sync** - **GitHub** pushes every change to the remote you set, **Local only** commits but never pushes.
 - **Auto-lock after** - how long an unlock lasts, 15 minutes by default. Pick a preset on the slider, from 5 minutes up to never, or type any number of minutes (`0` never locks).
