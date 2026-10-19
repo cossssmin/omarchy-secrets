@@ -5,23 +5,17 @@ import qs.Ui
 
 // A regular floating window (the Hyprland rule floats it), so clicking
 // elsewhere doesn't close it. keepLoaded keeps it, and any draft, alive
-// between opens. The bar widget passes its settings in the summon payload.
+// between opens.
 Item {
   id: root
 
   property var shell: null
   property bool closingFromHost: false
-  property var settings: ({})
 
   function open(payloadJson) {
-    if (payloadJson) {
-      try {
-        var parsed = JSON.parse(String(payloadJson))
-        if (parsed && typeof parsed === "object" && Object.keys(parsed).length > 0) root.settings = parsed
-      } catch (e) { /* keep previous settings */ }
-    }
     root.closingFromHost = false
     window.visible = true
+    vault.loadConfig()
     vault.refresh(true)
     Qt.callLater(view.focusInput)
   }
@@ -42,10 +36,6 @@ Item {
 
   Vault {
     id: vault
-    settingFn: function(name, fallback) {
-      var v = root.settings[name]
-      return v === undefined || v === null ? fallback : v
-    }
   }
 
   FloatingWindow {

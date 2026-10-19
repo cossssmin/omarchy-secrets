@@ -3,16 +3,11 @@ import Quickshell
 import Quickshell.Io
 
 // Lock state and the env/key index, backed by bin/secrets. The CLI owns all
-// crypto and git; values only pass through here when revealed or edited,
-// and passphrases/values always go over stdin, never argv.
+// crypto, git and settings (~/.config/secrets/config); values only pass
+// through here when revealed or edited, and passphrases/values always go
+// over stdin, never argv.
 Item {
   id: root
-
-  // function(name, fallback) resolving a plugin setting, or null.
-  property var settingFn: null
-
-  readonly property int ttlMinutes: Math.max(0, Number(setting("ttlMinutes", 0)))
-  readonly property string repoDir: String(setting("repoDir", "")).replace(/^~(?=\/|$)/, Quickshell.env("HOME"))
 
   readonly property string cli: decodeURIComponent(Qt.resolvedUrl("bin/secrets").toString().replace(/^file:\/\//, ""))
 
@@ -22,7 +17,10 @@ Item {
   property string expires: ""
   property bool remote: false
   property int unpushed: 0
+  property bool trusted: true
   property var entries: []
+  // dir, ttl (seconds), sync ("github" | "local"), lockOnScreenLock, remote
+  property var config: ({})
 
   property bool busy: false
   property bool syncing: false
@@ -32,11 +30,6 @@ Item {
   signal unlockedNow()
 
   onBusyChanged: if (!busy) root.syncing = false
-
-  function setting(name, fallback) {
-    var v = root.settingFn ? root.settingFn(name, fallback) : fallback
-    return v === undefined || v === null || v === "" ? fallback : v
-  }
 
   function cleanError(text) {
     var lines = String(text || "").trim().split("\n")
@@ -55,10 +48,8 @@ Item {
   }
 
   function run(args, input, done) {
-    var command = ["env", "SECRETS_TTL=" + (root.ttlMinutes * 60)]
-    if (root.repoDir) command.push("SECRETS_DIR=" + root.repoDir)
     var proc = procComponent.createObject(root, {
-      command: command.concat([root.cli]).concat(args),
+      command: [root.cli].concat(args),
       input: input === undefined || input === null ? "" : String(input),
       done: done || null
     })
@@ -87,9 +78,35 @@ Item {
       root.expires = String(s.expires || "")
       root.remote = s.remote === true
       root.unpushed = Number(s.unpushed || 0)
+      // A refused save leaves the recipients error up; drop it once trusted.
+      if (!root.trusted && s.trusted !== false) root.error = ""
+      root.trusted = s.trusted !== false
       root.loaded = true
+      // Nothing else can watch the lock screen for us, so this poll does.
+      if (root.unlocked && s.lockOnScreenLock && s.screenLocked) { root.lock(); return }
       if (!root.unlocked) root.entries = []
       else if (withIndex || !wasUnlocked) root.loadIndex()
+    })
+  }
+
+  function loadConfig() {
+    run(["config"], "", function(code, out, err) {
+      if (code !== 0) { root.fail(err); return }
+      try { root.config = JSON.parse(out) } catch (e) { root.fail("bad config output") }
+    })
+  }
+
+  // Applies [[name, value], ...] one at a time, stopping at the first error.
+  function saveConfig(changes, done) {
+    if (changes.length === 0) {
+      root.say("Settings saved")
+      root.loadConfig()
+      root.refresh(true)
+      done()
+      return
+    }
+    act(["config", "set", changes[0][0], String(changes[0][1])], "", function() {
+      root.saveConfig(changes.slice(1), done)
     })
   }
 
@@ -153,9 +170,11 @@ Item {
     onTriggered: root.notice = ""
   }
 
-  // Catches expiry and unlocks/locks done from a terminal.
+  Component.onCompleted: root.loadConfig()
+
+  // Catches expiry, screen locks, and unlocks/locks done from a terminal.
   Timer {
-    interval: 20000
+    interval: 5000
     running: true
     repeat: true
     triggeredOnStart: true

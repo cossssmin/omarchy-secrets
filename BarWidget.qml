@@ -4,8 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar icon for the Secrets window: shows lock state and toggles the window,
-// handing it this widget's settings.
+// Bar icon for the Secrets window: shows lock state and toggles the window.
 BarWidget {
   id: root
   moduleName: "cossssmin.secrets"
@@ -14,11 +13,7 @@ BarWidget {
   readonly property string cli: decodeURIComponent(Qt.resolvedUrl("bin/secrets").toString().replace(/^file:\/\//, ""))
 
   function toggle() {
-    var payload = JSON.stringify({
-      ttlMinutes: root.setting("ttlMinutes", 0),
-      repoDir: root.setting("repoDir", "")
-    })
-    Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "cossssmin.secrets", payload])
+    Quickshell.execDetached(["omarchy-shell", "shell", "toggle", "cossssmin.secrets"])
     statusTimer.restart()
   }
 

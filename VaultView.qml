@@ -15,12 +15,14 @@ Column {
 
   readonly property string mode: {
     if (!vault.loaded) return "loading"
+    if (settingsOpen) return "settings"
     if (!vault.initialized) return "setup"
     if (!vault.unlocked) return "locked"
     return editing ? "edit" : "list"
   }
 
   property bool editing: false
+  property bool settingsOpen: false
   property string editOldEnv: ""
   property string editOldKey: ""
   property bool showValue: false
@@ -71,7 +73,7 @@ Column {
   }
 
   function focusInput() {
-    var target = { setup: setupPass, locked: unlockPass, list: search, edit: editEnv.text === "" ? editEnv : (editKey.text === "" ? editKey : editValue) }[view.mode]
+    var target = { setup: setupPass, locked: unlockPass, list: search, settings: settingsDir, edit: editEnv.text === "" ? editEnv : (editKey.text === "" ? editKey : editValue) }[view.mode]
     if (!target) return
     if (target === search) search.selectAll()
     target.forceActiveFocus()
@@ -88,6 +90,7 @@ Column {
 
   // Escape: leave a rename or the editor first, then let the host close.
   function back() {
+    if (view.settingsOpen) { view.settingsOpen = false; return true }
     if (view.renamingEnv !== "") { view.cancelRename(); return true }
     if (view.mode !== "edit") return false
     view.cancelEdit()
@@ -117,7 +120,11 @@ Column {
   // Tab/Shift+Tab within a form; false when the mode has no form so the
   // host can switch panels instead.
   function cycleFocus(direction) {
-    var fields = { setup: [setupPass, setupConfirm], edit: [editEnv, editKey, editValue] }[view.mode]
+    var fields = {
+      setup: [setupPass, setupConfirm],
+      edit: [editEnv, editKey, editValue],
+      settings: [settingsDir, syncChoice].concat(settingsRemote.visible ? [settingsRemote] : []).concat([ttlField.field, lockToggle])
+    }[view.mode]
     if (!fields) return false
     var current = fields.findIndex(function(f) { return f.activeFocus })
     fields[(current + direction + fields.length) % fields.length].forceActiveFocus()
@@ -226,6 +233,31 @@ Column {
     Qt.callLater(view.focusInput)
   }
 
+  function openSettings() {
+    var c = view.vault.config
+    settingsDir.text = c.dir || ""
+    syncChoice.value = c.sync || "github"
+    settingsRemote.text = c.remote || ""
+    ttlField.value = Math.round((c.ttl || 0) / 60)
+    lockToggle.checked = c.lockOnScreenLock !== false
+    view.settingsOpen = true
+  }
+
+  // Only what changed, in an order where each step can rely on the last:
+  // the repo folder first, so a remote lands on the right repo.
+  function saveSettings() {
+    var c = view.vault.config, changes = []
+    var dir = settingsDir.text.trim()
+    if (dir !== (c.dir || "")) changes.push(["dir", dir])
+    if (syncChoice.value !== (c.sync || "github")) changes.push(["sync", syncChoice.value])
+    if (syncChoice.value === "github" && settingsRemote.text.trim() !== (c.remote || ""))
+      changes.push(["remote", settingsRemote.text.trim()])
+    if (ttlField.value * 60 !== (c.ttl || 0)) changes.push(["ttl", ttlField.value * 60])
+    if (lockToggle.checked !== (c.lockOnScreenLock !== false))
+      changes.push(["lock-on-screen-lock", lockToggle.checked ? "true" : "false"])
+    view.vault.saveConfig(changes, function() { view.settingsOpen = false })
+  }
+
   function submitSetup() {
     if (setupPass.text === "") return
     if (setupPass.text !== setupConfirm.text) { view.vault.error = "Passphrases don't match"; return }
@@ -280,6 +312,7 @@ Column {
         elide: Text.ElideRight
         text: {
           if (view.mode === "loading") return "…"
+          if (view.mode === "settings") return "Settings"
           if (view.mode === "setup") return "Not set up yet"
           if (view.mode === "locked") return "Locked"
           var parts = [view.vault.expires === "perm" || view.vault.expires === "" ? "Unlocked" : "Locks in " + view.vault.expires]
@@ -297,7 +330,6 @@ Column {
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
-      visible: view.vault.unlocked
 
       PanelActionButton {
         iconText: String.fromCodePoint(0xF0415)
@@ -312,6 +344,7 @@ Column {
         tooltipText: view.vault.remote ? "Sync with GitHub" : "No git remote"
         foreground: view.foreground
         fontFamily: view.fontFamily
+        visible: view.vault.unlocked && view.vault.config.sync !== "local" && view.mode !== "settings"
         enabled: view.vault.remote && !view.vault.busy
         onClicked: view.vault.sync()
 
@@ -355,7 +388,16 @@ Column {
         tooltipText: "Lock now"
         foreground: view.foreground
         fontFamily: view.fontFamily
+        visible: view.vault.unlocked && view.mode !== "settings"
         onClicked: view.vault.lock()
+      }
+      PanelActionButton {
+        iconText: String.fromCodePoint(0xF0493)
+        tooltipText: "Settings (Ctrl+,)"
+        foreground: view.foreground
+        fontFamily: view.fontFamily
+        visible: view.mode !== "settings" && view.mode !== "loading"
+        onClicked: view.openSettings()
       }
     }
   }
@@ -445,6 +487,7 @@ Column {
         event.accepted = true
       }
       else if (ctrl && event.key === Qt.Key_N) { view.startAdd(); event.accepted = true }
+      else if (ctrl && event.key === Qt.Key_Comma) { view.openSettings(); event.accepted = true }
       else if (ctrl && event.key === Qt.Key_E) { view.editSelected(); event.accepted = true }
       else if (ctrl && event.key === Qt.Key_D) { view.deleteSelected(); event.accepted = true }
       else if (event.key === Qt.Key_Insert) { view.editSelected(); event.accepted = true }
@@ -752,6 +795,121 @@ Column {
     }
   }
 
+  // --- settings -----------------------------------------------------------------
+
+  Column {
+    width: parent.width
+    spacing: Style.spacing.xxl
+    visible: view.mode === "settings"
+
+    Column {
+      width: parent.width
+      spacing: Style.spacing.md
+
+      Text {
+        text: "Repo folder"
+        color: Qt.darker(view.foreground, 1.4)
+        font.family: view.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+      TextField {
+        id: settingsDir
+        width: parent.width
+        placeholderText: "~/.local/share/secrets"
+        foreground: view.foreground
+        font.family: view.fontFamily
+        onAccepted: view.saveSettings()
+      }
+      Text {
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: "An existing secrets repo, or an empty folder to start a new one."
+        color: Qt.darker(view.foreground, 1.6)
+        font.family: view.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+
+    Column {
+      width: parent.width
+      spacing: Style.spacing.md
+
+      Text {
+        text: "Sync"
+        color: Qt.darker(view.foreground, 1.4)
+        font.family: view.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+      ButtonGroup {
+        id: syncChoice
+        options: [{ value: "github", label: "GitHub" }, { value: "local", label: "Local only" }]
+        value: "github"
+        foreground: view.foreground
+        fontFamily: view.fontFamily
+        onChanged: function(v) { syncChoice.value = v }
+      }
+      TextField {
+        id: settingsRemote
+        visible: syncChoice.value === "github"
+        width: parent.width
+        placeholderText: "git@github.com:you/secrets.git"
+        foreground: view.foreground
+        font.family: view.fontFamily
+        onAccepted: view.saveSettings()
+      }
+      Text {
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: syncChoice.value === "github"
+          ? "Every change is pushed here. Use a private repo."
+          : "Changes are committed but never pushed."
+        color: Qt.darker(view.foreground, 1.6)
+        font.family: view.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+
+    NumberField {
+      id: ttlField
+      label: "Auto-lock after (minutes, 0 = never)"
+      from: 0
+      to: 1440
+      stepSize: 5
+      foreground: view.foreground
+      fontFamily: view.fontFamily
+      onModified: function(v) { ttlField.value = v }
+    }
+
+    Toggle {
+      id: lockToggle
+      width: parent.width
+      label: "Lock when the screen locks"
+      description: "Also covers suspend, since the screen locks first."
+      foreground: view.foreground
+      fontFamily: view.fontFamily
+      onClicked: lockToggle.checked = !lockToggle.checked
+    }
+
+    Row {
+      spacing: Style.spacing.controlGap
+
+      Button {
+        text: "Save"
+        bordered: true
+        foreground: view.foreground
+        fontFamily: view.fontFamily
+        enabled: !view.vault.busy
+        onClicked: view.saveSettings()
+      }
+      Button {
+        text: "Cancel"
+        foreground: view.foreground
+        fontFamily: view.fontFamily
+        onClicked: view.settingsOpen = false
+      }
+    }
+  }
+
   // --- footer -----------------------------------------------------------------
 
   // Status line: errors, then notices, then hints.
@@ -761,6 +919,7 @@ Column {
     spacing: Style.spacing.md
 
     readonly property string hint: {
+      if (view.mode === "settings") return "↵ save   Tab move   Esc cancel"
       if (view.renamingEnv !== "") return "↵ rename   Esc cancel"
       if (view.mode === "list") return "↵ value  ⇧↵ name  ⌃↵ line  ⌃N new  Ins edit  Del delete"
       if (view.mode === "edit") return "↵ next / save   Tab move   Esc cancel"
@@ -777,8 +936,11 @@ Column {
       width: parent.width
       visible: text !== ""
       elide: Text.ElideRight
-      text: view.vault.error || view.vault.notice || footer.hint
-      color: view.vault.error ? Color.urgent
+      text: view.vault.error
+        || (view.vault.trusted ? "" : ".age-recipients changed upstream: review it, then run secrets trust")
+        || view.vault.notice
+        || footer.hint
+      color: view.vault.error || !view.vault.trusted ? Color.urgent
         : (view.vault.notice ? Color.accent : Qt.darker(view.foreground, 1.6))
       font.family: view.fontFamily
       font.pixelSize: Style.font.caption
